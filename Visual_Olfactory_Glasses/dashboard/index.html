@@ -1,0 +1,287 @@
+<!-- Open with live server, add files in same directory, idk how to do it without live server - Ellina-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Glasses Visualization</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0"></script>
+</head>
+
+<body class="bg-light"> 
+    <div class="container mt-4">
+        <div class="text-center mb-4">
+            <h1>Glasses Visualization</h1>
+            <p class="text-muted">Syncing video timestamps with sensor data</p>
+        </div>
+
+        <div class="row align-items-stretch">
+            
+            <div class="col-12 col-lg-6 mb-4">
+                <div class="card shadow-sm h-100"> 
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <span class="fw-bold">Video Footage</span>
+                        <select id="videoSelector" class="form-select form-select-sm" style="width: auto;">
+                            <option value="vid1">ggbl</option>
+                            <option value="vid2">wilson</option>
+                        </select>
+                    </div>
+                    <div class="card-body d-flex flex-column justify-content-center">
+                        <video id="media" controls class="w-100 rounded">
+                            <source id="videoSource" src="ggbl.mp4" type="video/mp4">
+                        </video>
+                        <div class="mt-2 text-center text-muted small">
+                            Current Time: <span id="timeDisplay">0.00</span>s
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-lg-6 mb-4 d-flex flex-column gap-3">
+                
+                <div class="card shadow-sm flex-fill">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <span class="fw-bold">Graph 1</span>
+                        <select id="dataSelector1" class="form-select form-select-sm" style="width: auto;">
+                            <option value="dataset1">PM1.0</option>
+                            <option value="dataset2">PM2.5</option>
+                            <option value="dataset3">PM4.0</option>
+                            <option value="dataset4">PM10.0</option>
+                            <option value="dataset5">Humidity</option>
+                            <option value="dataset6">Temperature</option>
+                            <option value="dataset7">VOC</option>
+                            <option value="dataset8">NOx</option>
+                            <option value="dataset9">CO2</option>
+                        </select>
+                    </div>
+                    <div class="card-body position-relative" style="height: 250px;">
+                        <canvas id="chart1"></canvas>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm flex-fill">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <span class="fw-bold">Graph 2</span>
+                        <select id="dataSelector2" class="form-select form-select-sm" style="width: auto;">
+                            <option value="dataset1">PM1.0</option>
+                            <option value="dataset2" selected>PM2.5</option> 
+                            <option value="dataset3">PM4.0</option>
+                            <option value="dataset4">PM10.0</option>
+                            <option value="dataset5">Humidity</option>
+                            <option value="dataset6">Temperature</option>
+                            <option value="dataset7">VOC</option>
+                            <option value="dataset8">NOx</option>
+                            <option value="dataset9">CO2</option>
+                        </select>
+                    </div>
+                    <div class="card-body position-relative" style="height: 250px;">
+                        <canvas id="chart2"></canvas>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const videoLibrary = {
+            //TODO: update here for videos & CSVs
+            "vid1": {
+                videoFile: "ggbl.mp4",
+                csvFile: "04-07_20-18.csv",
+                startTime: "2026-04-07 20:20:42"
+            },
+            "vid2": {
+                videoFile: "wilson.mp4",
+                csvFile: "04-07_20-28.csv",
+                startTime: "2026-04-07 20:29:06"
+            }
+        };
+
+        const dataSources = {
+            "dataset1": { colIndex: 1, label: "PM1.0", color: "#0d6efd", stepped: false },
+            "dataset2": { colIndex: 2, label: "PM2.5", color: "#dc3545", stepped: false },
+            "dataset3": { colIndex: 3, label: "PM4.0", color: "#198754", stepped: false },
+            "dataset4": { colIndex: 4, label: "PM10.0", color: "#ffc107", stepped: false },
+            "dataset5": { colIndex: 5, label: "Humidity", color: "#0dcaf0", stepped: false },
+            "dataset6": { colIndex: 6, label: "Temperature", color: "#fd7e14", stepped: false },
+            "dataset7": { colIndex: 7, label: "VOC", color: "#6610f2", stepped: false },
+            "dataset8": { colIndex: 8, label: "NOx", color: "#d63384", stepped: false },
+            "dataset9": { colIndex: 9, label: "CO2", color: "#20c997", stepped: false }
+        };
+
+        let masterData = { timeLabels: [], columns: {} };
+        let chart1, chart2;
+        
+        const video = document.getElementById('media');
+        const videoSource = document.getElementById('videoSource');
+        const timeDisplay = document.getElementById('timeDisplay');
+        let isSyncing = false;
+
+        async function loadMasterCSV(csvFileName, videoStartTime) {
+            masterData = { timeLabels: [], columns: {} }; 
+            if (window.location.protocol === 'file:') {
+                alert("CSV loading is blocked when opening index.html directly. Run 'python3 -m http.server 8000' in this folder, then open http://localhost:8000/index.html");
+                return false;
+            }
+
+            try {
+                const response = await fetch(csvFileName);
+                if (!response.ok) throw new Error("File not found");
+                
+                const csvText = await response.text();
+                const lines = csvText.trim().split('\n');
+                lines.shift(); 
+                
+                const startMs = new Date(videoStartTime.replace(" ", "T")).getTime();
+                lines.forEach(line => {
+                    const parts = line.split(',');
+                    if (parts.length > 1) {
+                        const rowTimeMs = new Date(parts[0].replace(" ", "T")).getTime();
+                        const relativeSeconds = (rowTimeMs - startMs) / 1000;
+                        masterData.timeLabels.push(relativeSeconds);
+                        for (let i = 1; i < parts.length; i++) {
+                            if (!masterData.columns[i]) masterData.columns[i] = []; 
+                            masterData.columns[i].push(parseFloat(parts[i]));
+                        }
+                    }
+                });
+                return true;
+            } catch (error) {
+                console.error("Error loading CSV:", error);
+                alert("Could not load " + csvFileName + ".");
+                return false;
+            }
+        }
+
+        function createChartInstance(canvasId) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{ label: "", data: [], borderWidth: 2, pointRadius: 0, fill: true }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, 
+                    animation: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                        x: { type: 'linear', min: 0, max: 20, title: { display: true, text: 'Seconds' } },
+                        y: { type: 'linear' } 
+                    },
+                    plugins: {
+                        annotation: {
+                            annotations: { line1: { type: 'line', xMin: 0, xMax: 0, borderColor: 'red', borderWidth: 2 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateSpecificChartData(chartInstance, selectorId) {
+            if (!chartInstance || !masterData.timeLabels.length) return;
+
+            const selectedKey = document.getElementById(selectorId).value;
+            const config = dataSources[selectedKey];
+            const rawLabels = masterData.timeLabels;
+            const rawValues = masterData.columns[config.colIndex];
+            const newLabels = [];
+            const newValues = [];
+        
+            for (let i = 0; i < rawLabels.length; i++) {
+                if (rawLabels[i] >= 0) {
+                    newLabels.push(rawLabels[i]);
+                    newValues.push(rawValues[i]);
+                }
+            }
+
+            const minValue = Math.min(...newValues);
+            const maxValue = Math.max(...newValues);
+            
+          
+            const padding = (maxValue - minValue) * 0.05;
+            const safePadding = padding === 0 ? 1 : padding;
+
+            chartInstance.options.scales.y.min = minValue - safePadding;
+            chartInstance.options.scales.y.max = maxValue + safePadding;
+            
+            chartInstance.data.labels = newLabels;
+            chartInstance.data.datasets[0].data = newValues;
+            chartInstance.data.datasets[0].label = config.label;
+            chartInstance.data.datasets[0].borderColor = config.color;
+            chartInstance.data.datasets[0].backgroundColor = config.color + "1A";
+            chartInstance.data.datasets[0].stepped = config.stepped;
+            chartInstance.update();
+        }
+
+        async function handleVideoChange() {
+            const selectedVid = document.getElementById('videoSelector').value;
+            const config = videoLibrary[selectedVid];
+
+            videoSource.src = config.videoFile;
+            video.load();
+
+            const success = await loadMasterCSV(config.csvFile, config.startTime);
+            if (success) {
+                updateSpecificChartData(chart1, 'dataSelector1');
+                updateSpecificChartData(chart2, 'dataSelector2');
+                syncChartsToTime(0); 
+            }
+        }
+
+        function syncChartsToTime(t) {
+            timeDisplay.innerText = t.toFixed(2);
+            
+            [chart1, chart2].forEach(chart => {
+                if (chart) {
+                    chart.options.plugins.annotation.annotations.line1.xMin = t;
+                    chart.options.plugins.annotation.annotations.line1.xMax = t;
+                    
+                    // Updated to 20-second rolling window (10 seconds before and after current time)
+                    if (t > 10) {
+                        chart.options.scales.x.min = t - 10;
+                        chart.options.scales.x.max = t + 10;
+                    } else {
+                        chart.options.scales.x.min = 0;
+                        chart.options.scales.x.max = 20;
+                    }
+                    chart.update('none');
+                }
+            });
+        }
+
+        function syncLoop() {
+            if (!isSyncing) return;
+            syncChartsToTime(video.currentTime);
+            requestAnimationFrame(syncLoop);
+        }
+
+        async function initDashboard() {
+            chart1 = createChartInstance('chart1');
+            chart2 = createChartInstance('chart2');
+
+            await handleVideoChange();
+
+            document.getElementById('videoSelector').addEventListener('change', handleVideoChange);
+            document.getElementById('dataSelector1').addEventListener('change', () => {
+                updateSpecificChartData(chart1, 'dataSelector1');
+            });
+            document.getElementById('dataSelector2').addEventListener('change', () => {
+                updateSpecificChartData(chart2, 'dataSelector2');
+            });
+
+            video.onplay = () => { isSyncing = true; syncLoop(); };
+            video.onpause = () => { isSyncing = false; };
+            video.ontimeupdate = () => {
+                if (!isSyncing) syncChartsToTime(video.currentTime);
+            };
+        }
+
+        initDashboard();
+
+    </script>
+</body>
+</html>
